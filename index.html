@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="theme-color" content="#000000">
+  <title>Flores</title>
+  <style>
+    :root{
+      --yellow:#ffe600;
+      --yellow2:#fff36a;
+      --black:#000;
+    }
+    *{box-sizing:border-box}
+    html,body{
+      width:100%;height:100%;margin:0;overflow:hidden;
+      background:#000;color:var(--yellow);
+      font-family:Arial,Helvetica,sans-serif;
+      touch-action:none;
+      -webkit-user-select:none;user-select:none;
+    }
+    #app{position:fixed;inset:0;background:#000;overflow:hidden}
+    canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+    #intro{
+      position:absolute;inset:0;display:grid;place-items:center;
+      transition:opacity .45s ease;
+      pointer-events:none;
+    }
+    #start{
+      pointer-events:auto;
+      width:118px;height:118px;border-radius:50%;border:0;
+      background:var(--yellow);box-shadow:0 0 0 0 rgba(255,230,0,.35);
+      cursor:pointer;outline:none;
+      animation:pulse 2s infinite;
+    }
+    #start:active{transform:scale(.93)}
+    #message{
+      position:absolute;inset:0;display:grid;place-items:center;
+      padding:8vw;text-align:center;pointer-events:none;
+      opacity:0;transform:scale(.96);
+      transition:opacity .9s ease,transform .9s ease;
+    }
+    #message.show{opacity:1;transform:scale(1)}
+    #message h1{
+      margin:0;max-width:1100px;
+      font-size:clamp(42px,9vw,150px);
+      line-height:.95;letter-spacing:-.045em;
+      color:var(--yellow);font-weight:800;
+      text-shadow:0 0 24px rgba(255,230,0,.10);
+    }
+    #hint{
+      position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
+      color:rgba(255,230,0,.35);font-size:12px;letter-spacing:.14em;
+      text-transform:uppercase;opacity:0;transition:opacity .8s;
+      pointer-events:none;white-space:nowrap;
+    }
+    #hint.show{opacity:1}
+    @keyframes pulse{
+      0%,100%{box-shadow:0 0 0 0 rgba(255,230,0,.28)}
+      50%{box-shadow:0 0 0 18px rgba(255,230,0,0)}
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <canvas id="canvas"></canvas>
+
+  <div id="intro">
+    <button id="start" aria-label="Comenzar"></button>
+  </div>
+
+  <div id="message">
+    <!-- CAMBIA ESTE TEXTO -->
+    <h1 id="messageText">TU TEXTO AQUÍ</h1>
+  </div>
+
+  <div id="hint">toca · arrastra · dibuja</div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ============================================================
+  // CONFIGURACIÓN RÁPIDA
+  // ============================================================
+  const TEXT = "TU TEXTO AQUÍ"; // <-- cambia esto
+  const FLOWER_COUNT = 125;     // flores del estallido inicial
+  const TRAIL_GAP = 18;         // distancia entre flores al arrastrar
+  const MAX_INTERACTIVE = 700;  // límite para no saturar móviles
+  const FLOWER_LIFE = 2600;     // ms de vida de una flor tocada/dibujada
+
+  const canvas = document.getElementById("canvas");
+  const ctx = canvas.getContext("2d", { alpha:false });
+  const start = document.getElementById("start");
+  const intro = document.getElementById("intro");
+  const message = document.getElementById("message");
+  const messageText = document.getElementById("messageText");
+  const hint = document.getElementById("hint");
+
+  messageText.textContent = TEXT;
+
+  let W=innerWidth,H=innerHeight,DPR=Math.min(devicePixelRatio||1,2);
+  let flowers=[];
+  let running=false;
+  let pointerDown=false;
+  let lastX=0,lastY=0,lastStamp=0;
+
+  function resize(){
+    W=innerWidth; H=innerHeight;
+    DPR=Math.min(devicePixelRatio||1,2);
+    canvas.width=Math.round(W*DPR);
+    canvas.height=Math.round(H*DPR);
+    canvas.style.width=W+"px";
+    canvas.style.height=H+"px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+  }
+  addEventListener("resize",resize,{passive:true});
+  resize();
+
+  // ------------------------------------------------------------
+  // Flor vectorial: 8 pétalos, contorno oscuro y centro amarillo,
+  // inspirada directamente en la referencia subida.
+  // ------------------------------------------------------------
+  function drawFlower(x,y,size,rot,alpha=1){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(rot);
+    ctx.globalAlpha=alpha;
+
+    const petalCount=8;
+    const outline=Math.max(1.4,size*.055);
+    const outer=size;
+    const inner=size*.34;
+
+    // pétalos
+    for(let i=0;i<petalCount;i++){
+      const a=i*Math.PI*2/petalCount;
+      ctx.save();
+      ctx.rotate(a);
+
+      ctx.beginPath();
+      ctx.moveTo(0,-inner*.10);
+      ctx.bezierCurveTo(
+        -size*.50,-size*.32,
+        -size*.64,-size*.86,
+        0,-outer
+      );
+      ctx.bezierCurveTo(
+        size*.64,-size*.86,
+        size*.50,-size*.32,
+        0,-inner*.10
+      );
+      ctx.closePath();
+
+      ctx.fillStyle="#f6d92f";
+      ctx.fill();
+      ctx.lineWidth=outline;
+      ctx.strokeStyle="#17130a";
+      ctx.stroke();
+
+      // brillo suave del pétalo
+      ctx.beginPath();
+      ctx.arc(-size*.15,-size*.61,size*.075,0,Math.PI*2);
+      ctx.fillStyle="rgba(255,249,150,.70)";
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+    // centro
+    ctx.beginPath();
+    ctx.arc(0,0,size*.34,0,Math.PI*2);
+    ctx.fillStyle="#ffe95a";
+    ctx.fill();
+    ctx.lineWidth=outline*1.15;
+    ctx.strokeStyle="#17130a";
+    ctx.stroke();
+
+    // pequeña luz del centro
+    ctx.beginPath();
+    ctx.arc(-size*.085,-size*.095,size*.12,0,Math.PI*2);
+    ctx.fillStyle="rgba(255,255,215,.55)";
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function addFlower(x,y,size,rot,extra={}){
+    if(flowers.length>=MAX_INTERACTIVE){
+      flowers.splice(0,Math.ceil(MAX_INTERACTIVE*.08));
+    }
+    flowers.push({
+      x,y,size,rot,
+      alpha:extra.alpha ?? 1,
+      born:performance.now(),
+      life:extra.life ?? Infinity,
+      vx:extra.vx ?? 0,
+      vy:extra.vy ?? 0,
+      spin:extra.spin ?? 0,
+      scaleIn:extra.scaleIn ?? 1,
+      mode:extra.mode ?? "interactive"
+    });
+  }
+
+  function burst(){
+    flowers.length=0;
+    const cx=W/2,cy=H/2;
+    const maxR=Math.hypot(W,H)*.72;
+
+    for(let i=0;i<FLOWER_COUNT;i++){
+      const angle=Math.random()*Math.PI*2;
+      // distribución más densa cerca del centro y muy abierta hacia afuera
+      const r=Math.pow(Math.random(),.55)*maxR;
+      const x=cx+Math.cos(angle)*r;
+      const y=cy+Math.sin(angle)*r;
+
+      addFlower(
+        x,y,
+        17+Math.random()*24,
+        Math.random()*Math.PI*2,
+        {
+          born:performance.now(),
+          life:2550+Math.random()*900,
+          alpha:0,
+          vx:Math.cos(angle)*(170+Math.random()*280),
+          vy:Math.sin(angle)*(170+Math.random()*280),
+          spin:(Math.random()-.5)*2.0,
+          scaleIn:.1,
+          mode:"burst"
+        }
+      );
+    }
+  }
+
+  function startExperience(){
+    if(running)return;
+    running=true;
+    start.style.pointerEvents="none";
+    intro.style.opacity="0";
+    burst();
+
+    // después del estallido: negro + texto
+    setTimeout(()=>{
+      flowers.length=0;
+      message.classList.add("show");
+      hint.classList.add("show");
+    },3300);
+  }
+
+  start.addEventListener("click",startExperience);
+
+  // ------------------------------------------------------------
+  // Interacción táctil / mouse.
+  // Cada toque crea una flor. Al arrastrar, se siembra un trazo.
+  // ------------------------------------------------------------
+  function pointFromEvent(e){
+    return {x:e.clientX,y:e.clientY};
+  }
+
+  function plant(x,y,force=false){
+    const now=performance.now();
+    if(!force && now-lastStamp<25)return;
+    lastStamp=now;
+    addFlower(
+      x,y,
+      13+Math.random()*18,
+      Math.random()*Math.PI*2,
+      {
+        life:FLOWER_LIFE+Math.random()*1200,
+        scaleIn:.15,
+        spin:(Math.random()-.5)*.8
+      }
+    );
+  }
+
+  canvas.addEventListener("pointerdown",e=>{
+    if(!running)return;
+    pointerDown=true;
+    canvas.setPointerCapture?.(e.pointerId);
+    const p=pointFromEvent(e);
+    lastX=p.x; lastY=p.y;
+    plant(p.x,p.y,true);
+  });
+
+  canvas.addEventListener("pointermove",e=>{
+    if(!running || !pointerDown)return;
+    const p=pointFromEvent(e);
+    const dx=p.x-lastX,dy=p.y-lastY;
+    const dist=Math.hypot(dx,dy);
+    if(dist>=TRAIL_GAP){
+      const steps=Math.ceil(dist/TRAIL_GAP);
+      for(let i=1;i<=steps;i++){
+        const t=i/steps;
+        plant(lastX+dx*t,lastY+dy*t,true);
+      }
+      lastX=p.x;lastY=p.y;
+    }
+  });
+
+  canvas.addEventListener("pointerup",()=>{
+    pointerDown=false;
+  });
+  canvas.addEventListener("pointercancel",()=>{
+    pointerDown=false;
+  });
+
+  function animate(now){
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    ctx.fillStyle="#000";
+    ctx.fillRect(0,0,W,H);
+
+    for(let i=flowers.length-1;i>=0;i--){
+      const f=flowers[i];
+      const age=now-f.born;
+
+      if(age>f.life){
+        flowers.splice(i,1);
+        continue;
+      }
+
+      if(f.mode==="burst"){
+        const t=Math.min(age/2300,1);
+        const ease=t*t*(3-2*t);
+        // Desde el centro hacia afuera
+        const cx=W/2,cy=H/2;
+        const angle=Math.atan2(f.y-cy,f.x-cx);
+        const targetR=Math.hypot(f.x-cx,f.y-cy);
+        f.x=cx+Math.cos(angle)*targetR*ease;
+        f.y=cy+Math.sin(angle)*targetR*ease;
+        f.alpha=Math.min(1,age/260);
+        f.scaleIn=Math.min(1,.08+ease*.92);
+        f.rot+=f.spin*.012;
+      }else{
+        const k=Math.min(1,age/220);
+        f.scaleIn=Math.min(1,.08+.92*k);
+        f.rot+=f.spin*.004;
+        f.alpha=age>f.life-450 ? Math.max(0,(f.life-age)/450) : 1;
+      }
+
+      drawFlower(f.x,f.y,f.size*f.scaleIn,f.rot,f.alpha);
+    }
+
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+})();
+</script>
+</body>
+</html>
